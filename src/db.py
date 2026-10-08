@@ -13,14 +13,20 @@ def init_db():
             playlist_id TEXT,
             file_path TEXT,
             is_downloaded INTEGER NOT NULL DEFAULT 0,
+            has_lyrics INTEGER NOT NULL DEFAULT 0,
             downloaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    # Attempt to add file_path column if table already exists from previous runs
+    # Attempt to add columns if table already exists from previous runs
     try:
         cursor.execute("ALTER TABLE downloaded ADD COLUMN file_path TEXT")
     except sqlite3.OperationalError:
-        pass # Column already exists
+        pass
+    
+    try:
+        cursor.execute("ALTER TABLE downloaded ADD COLUMN has_lyrics INTEGER NOT NULL DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
     
     conn.commit()
     conn.close()
@@ -34,20 +40,39 @@ def is_downloaded(video_id: str) -> bool:
     
     if row and row[0] == 1:
         file_path = row[1]
-        # If we have a file path, verify the file actually exists on disk
         if file_path and os.path.exists(file_path):
             return True
         elif not file_path:
-            # Fallback for old entries without file_path
             return True
     return False
+
+def get_lyrics_status(video_id: str) -> int:
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT has_lyrics FROM downloaded WHERE video_id = ?", (video_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return row[0] if row else 0
 
 def mark_downloaded(video_id: str, playlist_id: str, file_path: str):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
+    # Using INSERT OR IGNORE and then UPDATE to ensure we don't overwrite has_lyrics
     cursor.execute("""
-        INSERT OR REPLACE INTO downloaded (video_id, playlist_id, file_path, is_downloaded)
-        VALUES (?, ?, ?, 1)
-    """, (video_id, playlist_id, file_path))
+        INSERT OR IGNORE INTO downloaded (video_id, playlist_id)
+        VALUES (?, ?)
+    """, (video_id, playlist_id))
+    cursor.execute("""
+        UPDATE downloaded SET is_downloaded = 1, file_path = ? WHERE video_id = ?
+    """, (file_path, video_id))
+    conn.commit()
+    conn.close()
+
+def mark_lyrics_status(video_id: str, status: int):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        UPDATE downloaded SET has_lyrics = ? WHERE video_id = ?
+    """, (status, video_id))
     conn.commit()
     conn.close()
